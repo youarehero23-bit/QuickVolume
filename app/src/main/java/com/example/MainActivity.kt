@@ -137,8 +137,14 @@ fun QuickVolumeDashboard() {
     val coroutineScope = rememberCoroutineScope()
 
     var hasOverlayPermission by remember { mutableStateOf(Settings.canDrawOverlays(context)) }
-    var isServiceRunning by remember { mutableStateOf(StatusBarVolumeService.isRunning) }
+    var isBallServiceRunning by remember { mutableStateOf(FloatingVolumeBallService.isRunning) }
+    var isStatusBarServiceRunning by remember { mutableStateOf(StatusBarVolumeService.isRunning) }
+    var floatingBallEnabled by remember { mutableStateOf(prefs.isFloatingBallEnabled) }
     var gestureEnabled by remember { mutableStateOf(prefs.isGestureEnabled) }
+    var isBootStartEnabled by remember { mutableStateOf(prefs.isBootStartEnabled) }
+    var isSnapToEdgeEnabled by remember { mutableStateOf(prefs.isSnapToEdgeEnabled) }
+    var isIdleDimmingEnabled by remember { mutableStateOf(prefs.isIdleDimmingEnabled) }
+    var ballSizeDp by remember { mutableIntStateOf(prefs.ballSizeDp) }
     var hapticEnabled by remember { mutableStateOf(prefs.isHapticEnabled) }
     var visualLineEnabled by remember { mutableStateOf(prefs.showVisualLine) }
     var sensitivity by remember { mutableFloatStateOf(prefs.sensitivity) }
@@ -156,10 +162,15 @@ fun QuickVolumeDashboard() {
             if (event == Lifecycle.Event.ON_RESUME) {
                 val permitted = Settings.canDrawOverlays(context)
                 hasOverlayPermission = permitted
-                isServiceRunning = StatusBarVolumeService.isRunning
-                if (permitted && gestureEnabled && !isServiceRunning) {
+                isBallServiceRunning = FloatingVolumeBallService.isRunning
+                isStatusBarServiceRunning = StatusBarVolumeService.isRunning
+                if (permitted && floatingBallEnabled && !isBallServiceRunning) {
+                    FloatingVolumeBallService.start(context)
+                    isBallServiceRunning = true
+                }
+                if (permitted && gestureEnabled && !isStatusBarServiceRunning) {
                     StatusBarVolumeService.start(context)
-                    isServiceRunning = true
+                    isStatusBarServiceRunning = true
                 }
             }
         }
@@ -197,11 +208,57 @@ fun QuickVolumeDashboard() {
         VolumeWidgetProvider.updateAllWidgets(context)
     }
 
-    fun toggleGestureService(enable: Boolean) {
+    fun toggleFloatingBall(enable: Boolean) {
         if (enable) {
             if (!Settings.canDrawOverlays(context)) {
                 coroutineScope.launch {
-                    snackbarHostState.showSnackbar("Overlay permission is required to detect status bar gestures.")
+                    snackbarHostState.showSnackbar("Overlay permission is required to show the floating ball.")
+                }
+                val intent = Intent(
+                    Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                    Uri.parse("package:${context.packageName}")
+                )
+                context.startActivity(intent)
+                return
+            }
+            prefs.isFloatingBallEnabled = true
+            floatingBallEnabled = true
+            FloatingVolumeBallService.start(context)
+            isBallServiceRunning = true
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar("Floating Volume Ball activated across all apps!")
+            }
+        } else {
+            prefs.isFloatingBallEnabled = false
+            floatingBallEnabled = false
+            FloatingVolumeBallService.stop(context)
+            isBallServiceRunning = false
+            coroutineScope.launch {
+                snackbarHostState.showSnackbar("Floating Volume Ball turned off.")
+            }
+        }
+    }
+
+    fun recenterBall() {
+        val displayMetrics = context.resources.displayMetrics
+        val density = displayMetrics.density
+        val ballSizePx = (ballSizeDp * density).toInt()
+        prefs.ballPosX = displayMetrics.widthPixels - ballSizePx - (14 * density).toInt()
+        prefs.ballPosY = (displayMetrics.heightPixels * 0.38f).toInt()
+        if (isBallServiceRunning) {
+            FloatingVolumeBallService.stop(context)
+            FloatingVolumeBallService.start(context)
+        }
+        coroutineScope.launch {
+            snackbarHostState.showSnackbar("Floating ball repositioned to screen edge.")
+        }
+    }
+
+    fun toggleStatusBarGesture(enable: Boolean) {
+        if (enable) {
+            if (!Settings.canDrawOverlays(context)) {
+                coroutineScope.launch {
+                    snackbarHostState.showSnackbar("Overlay permission is required for status bar gestures.")
                 }
                 val intent = Intent(
                     Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
@@ -213,17 +270,17 @@ fun QuickVolumeDashboard() {
             prefs.isGestureEnabled = true
             gestureEnabled = true
             StatusBarVolumeService.start(context)
-            isServiceRunning = true
+            isStatusBarServiceRunning = true
             coroutineScope.launch {
-                snackbarHostState.showSnackbar("Status Bar Gesture activated across all apps!")
+                snackbarHostState.showSnackbar("Status bar gesture service started.")
             }
         } else {
             prefs.isGestureEnabled = false
             gestureEnabled = false
             StatusBarVolumeService.stop(context)
-            isServiceRunning = false
+            isStatusBarServiceRunning = false
             coroutineScope.launch {
-                snackbarHostState.showSnackbar("Status Bar Gesture stopped.")
+                snackbarHostState.showSnackbar("Status bar gesture service stopped.")
             }
         }
     }
@@ -251,7 +308,7 @@ fun QuickVolumeDashboard() {
                             contentAlignment = Alignment.Center
                         ) {
                             Icon(
-                                imageVector = Icons.Default.Swipe,
+                                imageVector = Icons.Default.TouchApp,
                                 contentDescription = null,
                                 tint = MaterialTheme.colorScheme.onPrimary,
                                 modifier = Modifier.size(22.dp)
@@ -264,7 +321,7 @@ fun QuickVolumeDashboard() {
                                 fontWeight = FontWeight.Bold
                             )
                             Text(
-                                text = "Status Bar Volume Control",
+                                text = "Floating Volume Ball & Controls",
                                 style = MaterialTheme.typography.labelSmall,
                                 color = MaterialTheme.colorScheme.onSurfaceVariant
                             )
@@ -274,7 +331,7 @@ fun QuickVolumeDashboard() {
                 actions = {
                     Surface(
                         shape = RoundedCornerShape(12.dp),
-                        color = if (isServiceRunning) Color(0xFF10B981).copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
+                        color = if (isBallServiceRunning) Color(0xFF10B981).copy(alpha = 0.15f) else MaterialTheme.colorScheme.surfaceVariant,
                         modifier = Modifier.padding(end = 12.dp)
                     ) {
                         Row(
@@ -284,15 +341,15 @@ fun QuickVolumeDashboard() {
                         ) {
                             Box(
                                 modifier = Modifier
-                                    .size(8.dp)
-                                    .clip(CircleShape)
-                                    .background(if (isServiceRunning) Color(0xFF10B981) else Color.Gray)
+                                .size(8.dp)
+                                .clip(CircleShape)
+                                .background(if (isBallServiceRunning) Color(0xFF10B981) else Color.Gray)
                             )
                             Text(
-                                text = if (isServiceRunning) "ACTIVE" else "OFF",
+                                text = if (isBallServiceRunning) "BALL ACTIVE" else "STANDBY",
                                 style = MaterialTheme.typography.labelSmall,
                                 fontWeight = FontWeight.Bold,
-                                color = if (isServiceRunning) Color(0xFF047857) else MaterialTheme.colorScheme.onSurfaceVariant
+                                color = if (isBallServiceRunning) Color(0xFF047857) else MaterialTheme.colorScheme.onSurfaceVariant
                             )
                         }
                     }
@@ -337,27 +394,54 @@ fun QuickVolumeDashboard() {
                         )
                     }
 
-                    // PRIMARY FEATURE: STATUS BAR SLIDE GESTURE MASTER CARD
-                    StatusBarGestureMasterCard(
-                        isEnabled = gestureEnabled && isServiceRunning,
+                    // PRIMARY FEATURE: FLOATING VOLUME BALL MASTER CARD
+                    FloatingBallMasterCard(
+                        isEnabled = floatingBallEnabled && isBallServiceRunning,
                         hasPermission = hasOverlayPermission,
-                        onToggle = { enable -> toggleGestureService(enable) }
+                        onToggle = { enable -> toggleFloatingBall(enable) },
+                        onGrantPermission = {
+                            val intent = Intent(
+                                Settings.ACTION_MANAGE_OVERLAY_PERMISSION,
+                                Uri.parse("package:${context.packageName}")
+                            )
+                            context.startActivity(intent)
+                        },
+                        onRecenterBall = { recenterBall() }
                     )
 
-                    // HOW IT WORKS: VISUAL GESTURE DEMO CARD
-                    GestureDemonstrationCard()
+                    // HOW IT WORKS: DUAL GESTURE GUIDE (MOVE vs VOLUME)
+                    FloatingBallGesturesGuideCard()
 
-                    // CUSTOMIZATION & SENSITIVITY CARD
-                    GestureCustomizationCard(
-                        hapticEnabled = hapticEnabled,
+                    // HUMAN-LOVING SETTINGS & REBOOT PERSISTENCE
+                    FloatingBallSettingsCard(
+                        isBootStartEnabled = isBootStartEnabled,
+                        onBootStartToggle = {
+                            isBootStartEnabled = it
+                            prefs.isBootStartEnabled = it
+                        },
+                        isSnapToEdgeEnabled = isSnapToEdgeEnabled,
+                        onSnapToEdgeToggle = {
+                            isSnapToEdgeEnabled = it
+                            prefs.isSnapToEdgeEnabled = it
+                        },
+                        isIdleDimmingEnabled = isIdleDimmingEnabled,
+                        onIdleDimmingToggle = {
+                            isIdleDimmingEnabled = it
+                            prefs.isIdleDimmingEnabled = it
+                        },
+                        isHapticEnabled = hapticEnabled,
                         onHapticToggle = {
                             hapticEnabled = it
                             prefs.isHapticEnabled = it
                         },
-                        visualLineEnabled = visualLineEnabled,
-                        onVisualLineToggle = {
-                            visualLineEnabled = it
-                            prefs.showVisualLine = it
+                        ballSizeDp = ballSizeDp,
+                        onBallSizeChange = {
+                            ballSizeDp = it
+                            prefs.ballSizeDp = it
+                            if (isBallServiceRunning) {
+                                FloatingVolumeBallService.stop(context)
+                                FloatingVolumeBallService.start(context)
+                            }
                         },
                         sensitivity = sensitivity,
                         onSensitivityChange = {
@@ -401,6 +485,13 @@ fun QuickVolumeDashboard() {
                                 )
                             }
                         }
+                    )
+
+                    // SECONDARY FEATURE: STATUS BAR SLIDE (EXPANDABLE/OPTIONAL)
+                    StatusBarGestureMasterCard(
+                        isEnabled = gestureEnabled && isStatusBarServiceRunning,
+                        hasPermission = hasOverlayPermission,
+                        onToggle = { enable -> toggleStatusBarGesture(enable) }
                     )
 
                     // ZERO BATTERY LOAD ASSURANCE CARD
