@@ -257,6 +257,7 @@ class FloatingVolumeBallService : Service() {
         private var initialLpY = 0
         private var initialVolumeAtHold = 0
         private var holdVolumeStartY = 0f
+        private var lastVibratedVolume = -1
 
         // Visual / Morph Animation Progress: 0.0f (Compact Orb) -> 1.0f (Expanded Volume Capsule)
         private var morphProgress = 0f
@@ -415,7 +416,11 @@ class FloatingVolumeBallService : Service() {
                         if (targetVolume != currentVol) {
                             // Suppress Android system volume UI so the custom floating orb handles the feedback cleanly
                             volumeManager.setVolume(targetVolume, showUi = false)
-                            performHapticTick()
+                            val actualVol = volumeManager.getVolume()
+                            if (actualVol != lastVibratedVolume) {
+                                lastVibratedVolume = actualVol
+                                performHapticTick()
+                            }
                             VolumeWidgetProvider.updateAllWidgets(applicationContext)
                             invalidate()
                         }
@@ -448,6 +453,7 @@ class FloatingVolumeBallService : Service() {
             isHoldForVolumeActive = true
             isMovingPosition = false
             initialVolumeAtHold = volumeManager.getVolume()
+            lastVibratedVolume = initialVolumeAtHold
             holdVolumeStartY = touchDownY
 
             // Strong satisfying tactile confirmation
