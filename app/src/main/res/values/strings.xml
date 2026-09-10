@@ -1,0 +1,10 @@
+<resources>
+    <string name="app_name">QuickVolume</string>
+    <string name="tile_volume_up_label">Volume Up</string>
+    <string name="tile_volume_down_label">Volume Down</string>
+    <string name="widget_volume_up">Increase Volume</string>
+    <string name="widget_volume_down">Decrease Volume</string>
+    <string name="widget_description">Quick media volume adjustment pill with [+] and [-] buttons.</string>
+    <string name="gesture_service_title">Status Bar Volume Gesture</string>
+    <string name="gesture_service_desc">Slide along the top status bar across any app to smoothly adjust media volume.</string>
+</resources>

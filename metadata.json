@@ -1,0 +1,6 @@
+{
+  "name": "QuickVolume",
+  "description": "Gradually control media volume by sliding left or right across the status bar from any app, plus Quick Settings tiles and widgets.",
+  "requestFramePermissions": [],
+  "majorCapabilities": ["MAJOR_CAPABILITY_SERVER_SIDE_GEMINI_API"]
+}

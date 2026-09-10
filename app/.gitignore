@@ -1,0 +1,8 @@
+# Ignore build outputs except built APKs
+/build/*
+!/build/outputs/
+/build/outputs/*
+!/build/outputs/apk/
+output-metadata.json
+!*.apk
+!**/*.apk

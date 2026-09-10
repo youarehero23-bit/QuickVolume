@@ -1,0 +1,64 @@
+<?xml version="1.0" encoding="utf-8"?>
+<LinearLayout xmlns:android="http://schemas.android.com/apk/res/android"
+    android:id="@+id/widget_container"
+    android:layout_width="wrap_content"
+    android:layout_height="wrap_content"
+    android:orientation="horizontal"
+    android:background="@drawable/widget_pill_background"
+    android:gravity="center_vertical"
+    android:paddingStart="8dp"
+    android:paddingTop="6dp"
+    android:paddingEnd="8dp"
+    android:paddingBottom="6dp">
+
+    <!-- Volume Down Button -->
+    <ImageButton
+        android:id="@+id/btn_volume_down"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@drawable/widget_button_background"
+        android:contentDescription="@string/widget_volume_down"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_volume_down" />
+
+    <!-- Center Indicator / Launch Dashboard -->
+    <LinearLayout
+        android:id="@+id/center_status_container"
+        android:layout_width="wrap_content"
+        android:layout_height="wrap_content"
+        android:orientation="horizontal"
+        android:gravity="center"
+        android:paddingStart="12dp"
+        android:paddingEnd="12dp">
+
+        <ImageView
+            android:id="@+id/iv_center_icon"
+            android:layout_width="22dp"
+            android:layout_height="22dp"
+            android:contentDescription="@string/app_name"
+            android:src="@drawable/ic_volume_speaker" />
+
+        <TextView
+            android:id="@+id/tv_volume_level"
+            android:layout_width="wrap_content"
+            android:layout_height="wrap_content"
+            android:layout_marginStart="6dp"
+            android:text="VOL"
+            android:textColor="#F8FAFC"
+            android:textSize="13sp"
+            android:textStyle="bold" />
+    </LinearLayout>
+
+    <!-- Volume Up Button -->
+    <ImageButton
+        android:id="@+id/btn_volume_up"
+        android:layout_width="48dp"
+        android:layout_height="48dp"
+        android:background="@drawable/widget_button_background"
+        android:contentDescription="@string/widget_volume_up"
+        android:padding="10dp"
+        android:scaleType="fitCenter"
+        android:src="@drawable/ic_volume_up" />
+
+</LinearLayout>
