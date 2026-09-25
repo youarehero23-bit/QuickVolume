@@ -29,6 +29,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.OpenWith
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Refresh
 import androidx.compose.material.icons.filled.TouchApp
 import androidx.compose.material.icons.filled.Tune
@@ -318,13 +319,24 @@ fun FloatingBallGesturesGuideCard() {
 
             HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
 
-            // Gesture 3: Quick Tap
+            // Gesture 3: Call Volume (Double-Tap & Scroll)
+            GestureStepItem(
+                badge = "CALL VOLUME",
+                badgeColor = Color(0xFF10B981),
+                icon = Icons.Default.Phone,
+                title = "Double Tap & Scroll UP / DOWN",
+                description = "Double tap the ball and slide UP to raise call volume, or DOWN to lower it! The ball glows in vibrant emerald with a dedicated Call badge and tactile ticks. Tapping twice in place also quickly toggles between Media and Call volume modes."
+            )
+
+            HorizontalDivider(color = MaterialTheme.colorScheme.outlineVariant.copy(alpha = 0.5f))
+
+            // Gesture 4: Quick Tap
             GestureStepItem(
                 badge = "QUICK TAP",
-                badgeColor = Color(0xFF10B981),
+                badgeColor = Color(0xFF8B5CF6),
                 icon = Icons.Default.CheckCircle,
                 title = "Tap Once",
-                description = "Gives an instant tactile tick and lively pulse, displaying the live media level directly on the orb without interrupting your screen."
+                description = "Gives an instant tactile tick and lively pulse, displaying the live volume level directly on the orb without interrupting your screen."
             )
         }
     }

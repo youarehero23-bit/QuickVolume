@@ -230,9 +230,19 @@ class FloatingVolumeBallService : Service() {
     }
 
     /**
+     * Volume stream mode for the floating orb.
+     */
+    enum class VolumeStreamMode {
+        MEDIA,
+        CALL
+    }
+
+    /**
      * Custom view that renders the human-loving floating ball & handles:
-     * - Instant drag -> move position
-     * - Hold for ~250ms -> expand into vertical volume capsule and slide up/down
+     * - Instant drag -> move position anywhere on screen
+     * - Hold for ~240ms & slide UP/DOWN -> adjusts Media Volume
+     * - Double-tap & slide UP/DOWN -> adjusts Call Volume (STREAM_VOICE_CALL)
+     * - Quick double-tap in place -> toggles active mode between Media and Call Volume
      */
     inner class FloatingBallTouchView(
         context: Context,
@@ -259,6 +269,17 @@ class FloatingVolumeBallService : Service() {
         private var holdVolumeStartY = 0f
         private var lastVibratedVolume = -1
 
+        // Stream Selection States
+        private var activeStreamMode = VolumeStreamMode.MEDIA
+        private var adjustingStream = VolumeStreamMode.MEDIA
+
+        // Double Tap Tracking
+        private var lastTapUpTime = 0L
+        private var lastTapUpX = 0f
+        private var lastTapUpY = 0f
+        private var isSecondTap = false
+        private val doubleTapTimeout = 360L
+
         // Visual / Morph Animation Progress: 0.0f (Compact Orb) -> 1.0f (Expanded Volume Capsule)
         private var morphProgress = 0f
         private var morphAnimator: ValueAnimator? = null
@@ -271,10 +292,18 @@ class FloatingVolumeBallService : Service() {
             }
         }
 
+        // Auto-revert CALL mode to MEDIA mode after inactivity
+        private val revertCallModeRunnable = Runnable {
+            if (!isHoldForVolumeActive && !isMovingPosition && activeStreamMode == VolumeStreamMode.CALL) {
+                activeStreamMode = VolumeStreamMode.MEDIA
+                invalidate()
+            }
+        }
+
         // Hold Detection Runnable
         private val holdDetectionRunnable = Runnable {
             if (!isMovingPosition) {
-                triggerVolumeAdjustmentMode()
+                triggerVolumeAdjustmentMode(if (isSecondTap) VolumeStreamMode.CALL else activeStreamMode)
             }
         }
 
@@ -334,6 +363,7 @@ class FloatingVolumeBallService : Service() {
         fun onScreenOff() {
             mainHandler.removeCallbacks(holdDetectionRunnable)
             mainHandler.removeCallbacks(autoDimRunnable)
+            mainHandler.removeCallbacks(revertCallModeRunnable)
             visibility = GONE
         }
 
@@ -355,6 +385,11 @@ class FloatingVolumeBallService : Service() {
 
             when (event.actionMasked) {
                 MotionEvent.ACTION_DOWN -> {
+                    val now = System.currentTimeMillis()
+                    val isDoubleTapWindow = (now - lastTapUpTime) <= doubleTapTimeout &&
+                            abs(rawX - lastTapUpX) <= (touchSlop * 2.5f) &&
+                            abs(rawY - lastTapUpY) <= (touchSlop * 2.5f)
+
                     touchDownX = rawX
                     touchDownY = rawY
                     initialLpX = lp.x
@@ -365,10 +400,19 @@ class FloatingVolumeBallService : Service() {
                     // Wake up from dim immediately
                     animateDim(toDim = false)
                     mainHandler.removeCallbacks(autoDimRunnable)
-
-                    // Schedule the hold detector (240ms threshold for lovely responsiveness)
                     mainHandler.removeCallbacks(holdDetectionRunnable)
-                    mainHandler.postDelayed(holdDetectionRunnable, 240)
+                    mainHandler.removeCallbacks(revertCallModeRunnable)
+
+                    if (isDoubleTapWindow) {
+                        // User has tapped twice: activate Call Volume mode immediately for double-tap & scroll
+                        isSecondTap = true
+                        adjustingStream = VolumeStreamMode.CALL
+                        mainHandler.postDelayed(holdDetectionRunnable, 140)
+                    } else {
+                        isSecondTap = false
+                        adjustingStream = activeStreamMode
+                        mainHandler.postDelayed(holdDetectionRunnable, 240)
+                    }
                     return true
                 }
 
@@ -378,10 +422,21 @@ class FloatingVolumeBallService : Service() {
                     val distanceMoved = abs(dx) + abs(dy)
 
                     if (!isHoldForVolumeActive && !isMovingPosition) {
-                        // User moved before the hold timer fired -> cancel hold, start moving ball position!
-                        if (distanceMoved > touchSlop) {
-                            mainHandler.removeCallbacks(holdDetectionRunnable)
-                            isMovingPosition = true
+                        if (isSecondTap) {
+                            // On second tap, vertical movement immediately enters Call Volume adjustment mode
+                            if (abs(dy) > touchSlop && abs(dy) >= abs(dx)) {
+                                mainHandler.removeCallbacks(holdDetectionRunnable)
+                                triggerVolumeAdjustmentMode(VolumeStreamMode.CALL)
+                            } else if (abs(dx) > touchSlop * 1.5f && abs(dx) > abs(dy)) {
+                                mainHandler.removeCallbacks(holdDetectionRunnable)
+                                isMovingPosition = true
+                            }
+                        } else {
+                            // User moved before the hold timer fired -> cancel hold, start moving ball position!
+                            if (distanceMoved > touchSlop) {
+                                mainHandler.removeCallbacks(holdDetectionRunnable)
+                                isMovingPosition = true
+                            }
                         }
                     }
 
@@ -403,8 +458,17 @@ class FloatingVolumeBallService : Service() {
                         // User is in Volume Adjustment Mode!
                         // Slide UP: increases volume, Slide DOWN: decreases volume
                         val verticalSlide = holdVolumeStartY - rawY
-                        val maxVol = volumeManager.getMaxVolume().coerceAtLeast(1)
-                        val minVol = volumeManager.getMinVolume()
+                        val stream = adjustingStream
+                        val maxVol = if (stream == VolumeStreamMode.CALL) {
+                            volumeManager.getMaxCallVolume().coerceAtLeast(1)
+                        } else {
+                            volumeManager.getMaxVolume().coerceAtLeast(1)
+                        }
+                        val minVol = if (stream == VolumeStreamMode.CALL) {
+                            volumeManager.getMinCallVolume()
+                        } else {
+                            volumeManager.getMinVolume()
+                        }
                         val totalSteps = (maxVol - minVol).coerceAtLeast(1)
 
                         // Smooth gradual scaling: ~130dp vertical movement covers full volume spectrum
@@ -412,16 +476,34 @@ class FloatingVolumeBallService : Service() {
                         val stepChange = (verticalSlide / pixelsPerStep).toInt()
                         val targetVolume = (initialVolumeAtHold + stepChange).coerceIn(minVol, maxVol)
 
-                        val currentVol = volumeManager.getVolume()
+                        val currentVol = if (stream == VolumeStreamMode.CALL) {
+                            volumeManager.getCallVolume()
+                        } else {
+                            volumeManager.getVolume()
+                        }
+
                         if (targetVolume != currentVol) {
-                            // Suppress Android system volume UI so the custom floating orb handles the feedback cleanly
-                            volumeManager.setVolume(targetVolume, showUi = false)
-                            val actualVol = volumeManager.getVolume()
+                            // Suppress Android system volume UI so our custom floating orb provides the feedback cleanly
+                            if (stream == VolumeStreamMode.CALL) {
+                                volumeManager.setCallVolume(targetVolume, showUi = false)
+                            } else {
+                                volumeManager.setVolume(targetVolume, showUi = false)
+                            }
+
+                            val actualVol = if (stream == VolumeStreamMode.CALL) {
+                                volumeManager.getCallVolume()
+                            } else {
+                                volumeManager.getVolume()
+                            }
+
                             if (actualVol != lastVibratedVolume) {
                                 lastVibratedVolume = actualVol
                                 performHapticTick()
                             }
-                            VolumeWidgetProvider.updateAllWidgets(applicationContext)
+
+                            if (stream == VolumeStreamMode.MEDIA) {
+                                VolumeWidgetProvider.updateAllWidgets(applicationContext)
+                            }
                             invalidate()
                         }
                         return true
@@ -434,25 +516,45 @@ class FloatingVolumeBallService : Service() {
                     if (isHoldForVolumeActive) {
                         // Finish volume adjust mode, morph back to orb
                         collapseVolumeAdjustmentMode()
+                        lastTapUpTime = 0L // reset double-tap tracker
                     } else if (isMovingPosition) {
                         // Finished moving position: snap to screen edge if enabled
                         finishPositionMove()
+                        lastTapUpTime = 0L // reset double-tap tracker
                     } else {
-                        // Quick Tap without move: visual feedback & haptic pulse on orb
-                        performQuickTap()
+                        if (isSecondTap) {
+                            // Double tap without drag: toggle orb between Media and Call mode
+                            toggleStreamMode()
+                            lastTapUpTime = 0L
+                        } else {
+                            // First tap: register timestamp & position for double tap detection
+                            lastTapUpTime = System.currentTimeMillis()
+                            lastTapUpX = rawX
+                            lastTapUpY = rawY
+                            performQuickTap()
+                        }
                     }
 
                     scheduleAutoDim()
+                    if (activeStreamMode == VolumeStreamMode.CALL) {
+                        mainHandler.removeCallbacks(revertCallModeRunnable)
+                        mainHandler.postDelayed(revertCallModeRunnable, 12000)
+                    }
                     return true
                 }
             }
             return super.onTouchEvent(event)
         }
 
-        private fun triggerVolumeAdjustmentMode() {
+        private fun triggerVolumeAdjustmentMode(stream: VolumeStreamMode = activeStreamMode) {
             isHoldForVolumeActive = true
             isMovingPosition = false
-            initialVolumeAtHold = volumeManager.getVolume()
+            adjustingStream = stream
+            initialVolumeAtHold = if (stream == VolumeStreamMode.CALL) {
+                volumeManager.getCallVolume()
+            } else {
+                volumeManager.getVolume()
+            }
             lastVibratedVolume = initialVolumeAtHold
             holdVolumeStartY = touchDownY
 
@@ -489,6 +591,20 @@ class FloatingVolumeBallService : Service() {
                 }
                 start()
             }
+        }
+
+        private fun toggleStreamMode() {
+            activeStreamMode = if (activeStreamMode == VolumeStreamMode.MEDIA) {
+                VolumeStreamMode.CALL
+            } else {
+                VolumeStreamMode.MEDIA
+            }
+            performHoldHaptic()
+            // Distinct mode-switch pulse animation
+            animate().scaleX(1.24f).scaleY(1.24f).setDuration(120).withEndAction {
+                animate().scaleX(1.0f).scaleY(1.0f).setDuration(160).start()
+            }.start()
+            invalidate()
         }
 
         private fun collapseVolumeAdjustmentMode() {
@@ -607,27 +723,58 @@ class FloatingVolumeBallService : Service() {
             val h = height.toFloat()
             if (w <= 0 || h <= 0) return
 
-            val maxVol = volumeManager.getMaxVolume().coerceAtLeast(1)
-            val currentVol = volumeManager.getVolume()
-            val isMuted = volumeManager.isMuted() || currentVol == 0
-            val volumeRatio = (currentVol.toFloat() / maxVol.toFloat()).coerceIn(0f, 1f)
+            val isCallActive = (morphProgress > 0.1f && adjustingStream == VolumeStreamMode.CALL) ||
+                    (morphProgress <= 0.1f && activeStreamMode == VolumeStreamMode.CALL)
+
+            val currentVol: Int
+            val maxVol: Int
+            val minVol: Int
+            val isMuted: Boolean
+
+            if (isCallActive) {
+                currentVol = volumeManager.getCallVolume()
+                maxVol = volumeManager.getMaxCallVolume().coerceAtLeast(1)
+                minVol = volumeManager.getMinCallVolume()
+                isMuted = currentVol <= minVol
+            } else {
+                currentVol = volumeManager.getVolume()
+                maxVol = volumeManager.getMaxVolume().coerceAtLeast(1)
+                minVol = volumeManager.getMinVolume()
+                isMuted = volumeManager.isMuted() || currentVol == 0
+            }
+
+            val volumeRange = (maxVol - minVol).coerceAtLeast(1)
+            val volumeRatio = ((currentVol - minVol).toFloat() / volumeRange.toFloat()).coerceIn(0f, 1f)
             val volumePercentage = (volumeRatio * 100).toInt()
 
             val cornerRadius = (w / 2f)
             rectF.set(4f * density, 4f * density, w - (4f * density), h - (4f * density))
 
             // 1. Background Capsule / Orb with rich deep dark-glass gradient
-            val baseGradient = LinearGradient(
-                0f, 0f, 0f, h,
-                intArrayOf(Color.rgb(30, 41, 59), Color.rgb(15, 23, 42)),
-                null,
-                Shader.TileMode.CLAMP
-            )
+            val baseGradient = if (isCallActive) {
+                LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.rgb(6, 78, 59), Color.rgb(15, 23, 42)),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+            } else {
+                LinearGradient(
+                    0f, 0f, 0f, h,
+                    intArrayOf(Color.rgb(30, 41, 59), Color.rgb(15, 23, 42)),
+                    null,
+                    Shader.TileMode.CLAMP
+                )
+            }
             bgPaint.shader = baseGradient
             canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, bgPaint)
 
-            // 2. Cyan/Sky Aura Border
-            borderPaint.color = if (isMuted) Color.argb(180, 239, 68, 68) else Color.argb(160, 56, 189, 248)
+            // 2. Aura Border (Green for Call, Cyan for Media, Red for Muted Media)
+            borderPaint.color = when {
+                isCallActive -> Color.argb(220, 16, 185, 129) // Emerald Mint for Call Volume
+                isMuted -> Color.argb(180, 239, 68, 68)       // Red for Mute
+                else -> Color.argb(160, 56, 189, 248)          // Sky Cyan for Media
+            }
             canvas.drawRoundRect(rectF, cornerRadius, cornerRadius, borderPaint)
 
             if (morphProgress > 0.1f) {
@@ -646,8 +793,13 @@ class FloatingVolumeBallService : Service() {
                 val fillRect = RectF(sliderMarginX, fillTop, w - sliderMarginX, sliderBottom)
                 val fillGradient = LinearGradient(
                     0f, fillTop, 0f, sliderBottom,
-                    if (isMuted) intArrayOf(Color.rgb(239, 68, 68), Color.rgb(185, 28, 28))
-                    else intArrayOf(Color.rgb(56, 189, 248), Color.rgb(37, 99, 235)),
+                    if (isCallActive) {
+                        intArrayOf(Color.rgb(16, 185, 129), Color.rgb(13, 148, 136))
+                    } else if (isMuted) {
+                        intArrayOf(Color.rgb(239, 68, 68), Color.rgb(185, 28, 28))
+                    } else {
+                        intArrayOf(Color.rgb(56, 189, 248), Color.rgb(37, 99, 235))
+                    },
                     null,
                     Shader.TileMode.CLAMP
                 )
@@ -656,34 +808,44 @@ class FloatingVolumeBallService : Service() {
 
                 // Top symbol '+'
                 symbolPaint.textSize = 18f * density
+                symbolPaint.color = if (isCallActive) Color.rgb(167, 243, 208) else Color.argb(220, 255, 255, 255)
                 canvas.drawText("+", w / 2f, 26f * density, symbolPaint)
 
                 // Bottom symbol '-' or Mute
                 symbolPaint.textSize = 18f * density
-                canvas.drawText(if (isMuted) "✕" else "−", w / 2f, h - (16f * density), symbolPaint)
+                canvas.drawText(if (!isCallActive && isMuted) "✕" else "−", w / 2f, h - (16f * density), symbolPaint)
+
+                // Top Stream Badge
+                textPaint.textSize = 10f * density
+                textPaint.color = if (isCallActive) Color.rgb(110, 231, 183) else Color.rgb(147, 197, 253)
+                canvas.drawText(if (isCallActive) "CALL" else "MEDIA", w / 2f, 38f * density, textPaint)
 
                 // Center percentage text
                 textPaint.textSize = 15f * density
                 textPaint.color = Color.WHITE
                 val textY = (sliderTop + sliderBottom) / 2f + (5f * density)
-                canvas.drawText(if (isMuted) "MUTE" else "$volumePercentage%", w / 2f, textY, textPaint)
+                val centerLabel = if (!isCallActive && isMuted) "MUTE" else "$volumePercentage%"
+                canvas.drawText(centerLabel, w / 2f, textY, textPaint)
 
             } else {
                 // COMPACT ORB MODE
-                // Draws volume percentage or speaker glyph
                 textPaint.textSize = 14f * density
-                textPaint.color = if (isMuted) Color.rgb(248, 113, 113) else Color.rgb(224, 242, 254)
+                textPaint.color = when {
+                    isCallActive -> Color.rgb(167, 243, 208)
+                    isMuted -> Color.rgb(248, 113, 113)
+                    else -> Color.rgb(224, 242, 254)
+                }
 
-                val displayLabel = if (isMuted) "MUTE" else "$volumePercentage%"
+                val displayLabel = if (!isCallActive && isMuted) "MUTE" else "$volumePercentage%"
                 val fontMetrics = textPaint.fontMetrics
                 val textCenterY = (h / 2f) - ((fontMetrics.ascent + fontMetrics.descent) / 2f) - (3f * density)
 
                 canvas.drawText(displayLabel, w / 2f, textCenterY, textPaint)
 
-                // Mini sound wave indicator arc beneath text
+                // Mini indicator arc / label beneath text
                 symbolPaint.textSize = 10f * density
-                symbolPaint.color = Color.argb(180, 147, 197, 253)
-                val subText = if (isMuted) "●" else "VOL"
+                symbolPaint.color = if (isCallActive) Color.rgb(52, 211, 153) else Color.argb(180, 147, 197, 253)
+                val subText = if (isCallActive) "CALL" else (if (isMuted) "●" else "VOL")
                 canvas.drawText(subText, w / 2f, textCenterY + (13f * density), symbolPaint)
             }
         }

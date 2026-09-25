@@ -53,6 +53,7 @@ import androidx.compose.material.icons.filled.CheckCircle
 import androidx.compose.material.icons.filled.Info
 import androidx.compose.material.icons.filled.Layers
 import androidx.compose.material.icons.filled.Notifications
+import androidx.compose.material.icons.filled.Phone
 import androidx.compose.material.icons.filled.Remove
 import androidx.compose.material.icons.filled.Settings
 import androidx.compose.material.icons.filled.Swipe
@@ -151,10 +152,14 @@ fun QuickVolumeDashboard() {
 
     val minVol = remember { volumeManager.getMinVolume() }
     val maxVol = remember { volumeManager.getMaxVolume().coerceAtLeast(1) }
-
     var currentVolume by remember { mutableIntStateOf(volumeManager.getVolume()) }
     var sliderPosition by remember { mutableFloatStateOf(currentVolume.toFloat()) }
     var isMuted by remember { mutableStateOf(volumeManager.isMuted()) }
+
+    val minCallVol = remember { volumeManager.getMinCallVolume() }
+    val maxCallVol = remember { volumeManager.getMaxCallVolume().coerceAtLeast(1) }
+    var currentCallVolume by remember { mutableIntStateOf(volumeManager.getCallVolume()) }
+    var callSliderPosition by remember { mutableFloatStateOf(currentCallVolume.toFloat()) }
 
     // Re-check overlay permission and service status on resume
     DisposableEffect(lifecycleOwner) {
@@ -188,6 +193,10 @@ fun QuickVolumeDashboard() {
                 currentVolume = newVol
                 sliderPosition = newVol.toFloat()
                 isMuted = volumeManager.isMuted()
+
+                val newCallVol = volumeManager.getCallVolume()
+                currentCallVolume = newCallVol
+                callSliderPosition = newCallVol.toFloat()
             }
         }
         val filter = IntentFilter("android.media.VOLUME_CHANGED_ACTION")
@@ -205,6 +214,11 @@ fun QuickVolumeDashboard() {
         currentVolume = vol
         sliderPosition = vol.toFloat()
         isMuted = volumeManager.isMuted()
+
+        val callVol = volumeManager.getCallVolume()
+        currentCallVolume = callVol
+        callSliderPosition = callVol.toFloat()
+
         VolumeWidgetProvider.updateAllWidgets(context)
     }
 
@@ -484,6 +498,30 @@ fun QuickVolumeDashboard() {
                                     if (volumeManager.isMuted()) "Media volume muted" else "Media volume unmuted"
                                 )
                             }
+                        }
+                    )
+
+                    // LIVE CALL VOLUME TEST BENCH (Double-Tap & Scroll feature)
+                    CallVolumeHeroCard(
+                        currentVolume = currentCallVolume,
+                        minVol = minCallVol,
+                        maxVol = maxCallVol,
+                        sliderPosition = callSliderPosition,
+                        onSliderChange = { newPos ->
+                            callSliderPosition = newPos
+                            val intLevel = newPos.toInt()
+                            if (intLevel != currentCallVolume) {
+                                currentCallVolume = intLevel
+                                volumeManager.setCallVolume(intLevel, showUi = false)
+                            }
+                        },
+                        onVolumeDown = {
+                            volumeManager.callVolumeDown()
+                            syncVolumeState()
+                        },
+                        onVolumeUp = {
+                            volumeManager.callVolumeUp()
+                            syncVolumeState()
                         }
                     )
 
@@ -1199,6 +1237,183 @@ fun VolumeHeroCard(
                     Icon(
                         imageVector = Icons.Default.Add,
                         contentDescription = "Step volume up",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+fun CallVolumeHeroCard(
+    currentVolume: Int,
+    minVol: Int,
+    maxVol: Int,
+    sliderPosition: Float,
+    onSliderChange: (Float) -> Unit,
+    onVolumeDown: () -> Unit,
+    onVolumeUp: () -> Unit
+) {
+    val volumeRange = (maxVol - minVol).coerceAtLeast(1)
+    val percentage = (((currentVolume - minVol).toFloat() / volumeRange.toFloat()) * 100).toInt().coerceIn(0, 100)
+
+    Card(
+        modifier = Modifier
+            .fillMaxWidth()
+            .testTag("call_volume_hero_card"),
+        shape = RoundedCornerShape(24.dp),
+        colors = CardDefaults.cardColors(
+            containerColor = Color(0xFF064E3B).copy(alpha = 0.25f)
+        ),
+        elevation = CardDefaults.cardElevation(defaultElevation = 2.dp)
+    ) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .padding(22.dp),
+            horizontalAlignment = Alignment.CenterHorizontally,
+            verticalArrangement = Arrangement.spacedBy(16.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column {
+                    Row(
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(6.dp)
+                    ) {
+                        Text(
+                            text = "CALL VOLUME",
+                            style = MaterialTheme.typography.labelMedium,
+                            fontWeight = FontWeight.Bold,
+                            color = Color(0xFF10B981)
+                        )
+                        Surface(
+                            shape = RoundedCornerShape(4.dp),
+                            color = Color(0xFF10B981).copy(alpha = 0.18f)
+                        ) {
+                            Text(
+                                text = "DOUBLE-TAP & SCROLL",
+                                modifier = Modifier.padding(horizontal = 4.dp, vertical = 1.dp),
+                                style = MaterialTheme.typography.labelSmall,
+                                fontWeight = FontWeight.Bold,
+                                color = Color(0xFF10B981),
+                                fontSize = 9.sp
+                            )
+                        }
+                    }
+                    Text(
+                        text = "Level $currentVolume of $maxVol (STREAM_VOICE_CALL)",
+                        style = MaterialTheme.typography.bodyMedium,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+
+                Surface(
+                    shape = RoundedCornerShape(14.dp),
+                    color = Color(0xFF10B981).copy(alpha = 0.2f)
+                ) {
+                    Text(
+                        text = "$percentage%",
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold,
+                        color = Color(0xFF10B981),
+                        modifier = Modifier.padding(horizontal = 14.dp, vertical = 6.dp)
+                    )
+                }
+            }
+
+            Box(
+                modifier = Modifier
+                    .size(92.dp)
+                    .clip(CircleShape)
+                    .background(Color(0xFF10B981).copy(alpha = 0.15f)),
+                contentAlignment = Alignment.Center
+            ) {
+                Icon(
+                    imageVector = Icons.Default.Phone,
+                    contentDescription = "Call volume indicator",
+                    tint = Color(0xFF10B981),
+                    modifier = Modifier.size(46.dp)
+                )
+            }
+
+            Column(
+                modifier = Modifier.fillMaxWidth(),
+                verticalArrangement = Arrangement.spacedBy(4.dp)
+            ) {
+                Slider(
+                    value = sliderPosition,
+                    onValueChange = onSliderChange,
+                    valueRange = minVol.toFloat()..maxVol.toFloat(),
+                    steps = (maxVol - minVol - 1).coerceAtLeast(0),
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .testTag("call_volume_slider"),
+                    colors = SliderDefaults.colors(
+                        thumbColor = Color(0xFF10B981),
+                        activeTrackColor = Color(0xFF10B981),
+                        inactiveTrackColor = MaterialTheme.colorScheme.outlineVariant
+                    )
+                )
+
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(
+                        text = "Min ($minVol)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                    Text(
+                        text = "Max ($maxVol)",
+                        style = MaterialTheme.typography.labelSmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant
+                    )
+                }
+            }
+
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceEvenly,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                FilledTonalIconButton(
+                    onClick = onVolumeDown,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .testTag("btn_call_volume_down"),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = Color(0xFF10B981)
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Remove,
+                        contentDescription = "Step call volume down",
+                        modifier = Modifier.size(28.dp)
+                    )
+                }
+
+                FilledTonalIconButton(
+                    onClick = onVolumeUp,
+                    modifier = Modifier
+                        .size(56.dp)
+                        .testTag("btn_call_volume_up"),
+                    shape = CircleShape,
+                    colors = IconButtonDefaults.filledTonalIconButtonColors(
+                        containerColor = MaterialTheme.colorScheme.surface,
+                        contentColor = Color(0xFF10B981)
+                    )
+                ) {
+                    Icon(
+                        imageVector = Icons.Default.Add,
+                        contentDescription = "Step call volume up",
                         modifier = Modifier.size(28.dp)
                     )
                 }
